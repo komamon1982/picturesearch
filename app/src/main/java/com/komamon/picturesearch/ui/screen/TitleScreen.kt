@@ -44,6 +44,7 @@ import androidx.compose.ui.graphics.TransformOrigin
 import androidx.compose.ui.graphics.drawscope.rotate
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
@@ -59,13 +60,10 @@ import kotlin.random.Random
 private enum class TitlePhase {
     IDLE,          // プレゼント箱 + おしてね！
     LID_OPENING,   // ふたが開く (0.5秒)
-    CHARS_FLYING,  // キャラが飛び出す (1.5秒)
-    CONGRATS,      // おめでとうテキスト + 紙吹雪 (1秒)
+    CHARS_FLYING,  // キャラが飛び出す (全13枚・0.15秒ずつ)
+    CONGRATS,      // おめでとうテキスト + 紙吹雪
     READY          // ボタン表示
 }
-
-// ─── キャラクター横位置 (5枚) ─────────────────────────────────────────────────
-private val CHAR_X_SPREADS = listOf(-80f, -38f, 0f, 38f, 80f)
 
 // ─── 紙吹雪データ ──────────────────────────────────────────────────────────────
 private data class Confetti(
@@ -82,6 +80,8 @@ private val CONFETTI_COLORS = listOf(
     Color(0xFF4D96FF), Color(0xFFFF6FC8), Color(0xFFFFA500)
 )
 
+private const val CHAR_COUNT = 13
+
 // ─── TitleScreen ──────────────────────────────────────────────────────────────
 @Composable
 fun TitleScreen(
@@ -89,16 +89,38 @@ fun TitleScreen(
     onStartFromBeginning: () -> Unit,
     onContinue: () -> Unit
 ) {
+    // 画面幅から文字サイズを決定 (45%)
+    val screenWidthDp = LocalConfiguration.current.screenWidthDp.toFloat()
+    val charSizeDp    = screenWidthDp * 0.45f
+    // 箱の中心 (箱の高さ130dpの半分=65dp) にキャラを配置するための初期Yオフセット
+    // align(BottomCenter) → キャラ中心 = 250 - charSize/2; 箱中心 = 250 - 65 = 185
+    // 必要なオフセット = 185 - (250 - charSize/2) = charSize/2 - 65
+    val charInitialY  = charSizeDp / 2f - 65f   // 正値=下方向(箱中心に合わせる)
+
     var phase by remember { mutableStateOf(TitlePhase.IDLE) }
 
-    // ── アニメーション変数 ──────────────────────────────────────────────────
+    // ── Lid アニメーション ─────────────────────────────────────────────────
     val lidOffsetY   = remember { Animatable(0f) }
     val lidRotationX = remember { Animatable(0f) }
 
-    val selectedChars = remember { QuizRepository.questions.shuffled().take(5) }
-    val charOffsetY   = remember { List(5) { Animatable(0f) } }
-    val charAlpha     = remember { List(5) { Animatable(0f) } }
+    // ── 全13枚のキャラアニメーション ───────────────────────────────────────
+    val allChars    = QuizRepository.questions   // 固定順(char_01〜char_13)
 
+    // X方向: 放物線の水平成分 (LinearEasing)
+    val charOffsetX = remember { List(CHAR_COUNT) { Animatable(0f) } }
+    // Y方向: 放物線の垂直成分 (FastOutSlowInEasing = 初速大・頂点でゆっくり)
+    val charOffsetY = remember { List(CHAR_COUNT) { Animatable(0f) } }
+    val charAlpha   = remember { List(CHAR_COUNT) { Animatable(0f) } }
+
+    // 各キャラの飛び先をランダムに決定 (remember で1回だけ生成)
+    val charTargetX = remember {
+        List(CHAR_COUNT) { Random.nextFloat() * 240f - 120f }  // -120 〜 +120 dp
+    }
+    val charTargetY = remember {
+        List(CHAR_COUNT) { -(Random.nextFloat() * 100f + 250f) }  // -250 〜 -350 dp
+    }
+
+    // ── おめでとうアニメーション ───────────────────────────────────────────
     val congratsScale = remember { Animatable(0f) }
     val buttonAlpha   = remember { Animatable(0f) }
 
@@ -106,18 +128,17 @@ fun TitleScreen(
     val infiniteTransition = rememberInfiniteTransition(label = "title_infinite")
 
     val bounceOffset by infiniteTransition.animateFloat(
-        initialValue = 0f,
-        targetValue  = -10f,
+        initialValue  = 0f,
+        targetValue   = -10f,
         animationSpec = infiniteRepeatable(
             tween(500, easing = FastOutSlowInEasing),
             RepeatMode.Reverse
         ),
         label = "bounce"
     )
-
     val confettiProgress by infiniteTransition.animateFloat(
-        initialValue = 0f,
-        targetValue  = 1f,
+        initialValue  = 0f,
+        targetValue   = 1f,
         animationSpec = infiniteRepeatable(tween(3000, easing = LinearEasing)),
         label = "confetti"
     )
@@ -140,7 +161,7 @@ fun TitleScreen(
         when (phase) {
 
             TitlePhase.LID_OPENING -> {
-                // ふたを上に回転させながら持ち上げる (0.5秒)
+                // ふたを上方向に回転させて開く (0.5秒)
                 coroutineScope {
                     launch { lidOffsetY.animateTo(-70f,  tween(500)) }
                     launch { lidRotationX.animateTo(-80f, tween(500)) }
@@ -149,30 +170,40 @@ fun TitleScreen(
             }
 
             TitlePhase.CHARS_FLYING -> {
-                // キャラをずらしながら飛び出させる (合計 ~1.5秒)
+                // 全13枚を0.15秒ずつずらして放物線で飛び出す
+                // X: LinearEasing (等速水平移動) + Y: FastOutSlowInEasing (初速大・頂点でゆっくり)
+                // → 組み合わせで放物線の軌跡を表現
                 coroutineScope {
-                    selectedChars.indices.forEach { i ->
+                    allChars.indices.forEach { i ->
                         launch {
-                            delay(i * 220L)
-                            launch { charAlpha[i].animateTo(1f, tween(220)) }
+                            delay(i * 150L)  // 0.15秒間隔
+                            // フェードイン (短め)
+                            launch { charAlpha[i].animateTo(1f, tween(150)) }
+                            // 水平方向 (等速・直線)
+                            launch {
+                                charOffsetX[i].animateTo(
+                                    charTargetX[i],
+                                    tween(600, easing = LinearEasing)
+                                )
+                            }
+                            // 垂直方向 (放物線の頂点まで加速→減速)
                             charOffsetY[i].animateTo(
-                                -220f,
-                                tween(580, easing = FastOutSlowInEasing)
+                                charTargetY[i],
+                                tween(600, easing = FastOutSlowInEasing)
                             )
                         }
                     }
                 }
+                // 全キャラが停止したらCONGRATSへ
                 phase = TitlePhase.CONGRATS
             }
 
             TitlePhase.CONGRATS -> {
-                // おめでとうテキストがスプリングで登場
                 congratsScale.animateTo(
                     1f,
                     spring(Spring.DampingRatioMediumBouncy, Spring.StiffnessLow)
                 )
                 delay(800)
-                // ボタンがフェードイン
                 buttonAlpha.animateTo(1f, tween(600))
                 phase = TitlePhase.READY
             }
@@ -191,7 +222,7 @@ fun TitleScreen(
             }
     ) {
 
-        // ①紙吹雪レイヤー
+        // ① 紙吹雪レイヤー (CONGRATS 以降)
         if (phase == TitlePhase.CONGRATS || phase == TitlePhase.READY) {
             Canvas(modifier = Modifier.fillMaxSize()) {
                 confettiParticles.forEach { p ->
@@ -200,16 +231,16 @@ fun TitleScreen(
                     val y  = cy * (size.height + p.size * 2f) - p.size
                     rotate(p.rotation + confettiProgress * 360f, Offset(x, y)) {
                         drawRect(
-                            color    = p.color,
-                            topLeft  = Offset(x - p.size / 2f, y - p.size / 2f),
-                            size     = Size(p.size, p.size * 0.55f)
+                            color   = p.color,
+                            topLeft = Offset(x - p.size / 2f, y - p.size / 2f),
+                            size    = Size(p.size, p.size * 0.55f)
                         )
                     }
                 }
             }
         }
 
-        // ②タイトルテキスト (IDLE のみ)
+        // ② タイトルテキスト (IDLE のみ)
         if (phase == TitlePhase.IDLE) {
             Text(
                 text       = "えあてクイズ",
@@ -222,7 +253,7 @@ fun TitleScreen(
             )
         }
 
-        // ③おめでとうテキスト (CONGRATS + READY)
+        // ③ おめでとうテキスト (CONGRATS + READY)
         if (phase == TitlePhase.CONGRATS || phase == TitlePhase.READY) {
             Text(
                 text       = "にゅうがく\nおめでとう！",
@@ -241,28 +272,28 @@ fun TitleScreen(
             )
         }
 
-        // ④プレゼント箱エリア (画面中央より少し上に固定)
+        // ④ プレゼント箱エリア (画面中央より少し上に固定)
         Box(
-            modifier          = Modifier
+            modifier         = Modifier
                 .size(280.dp, 250.dp)
                 .align(Alignment.Center)
                 .offset(y = (-20).dp),
-            contentAlignment  = Alignment.BottomCenter
+            contentAlignment = Alignment.BottomCenter
         ) {
 
-            // ── キャラクター画像 (箱の中心から飛び出す) ──────────────────
-            // 初期Y: -25dp → 箱の中心と一致 (計算: 箱高130dp/2=65dp から箱底=0基準)
-            selectedChars.forEachIndexed { i, question ->
+            // ── キャラクター画像 (全13枚・箱の背後に待機→放物線で飛び出す) ──
+            // 描画順: キャラ → 箱本体 → ふた (箱が手前でキャラを隠す)
+            allChars.forEachIndexed { i, question ->
                 Image(
                     painter            = painterResource(question.imageRes),
                     contentDescription = null,
                     contentScale       = ContentScale.Fit,
                     modifier           = Modifier
-                        .size(80.dp)
+                        .size(charSizeDp.dp)  // 画面幅の45%
                         .align(Alignment.BottomCenter)
                         .offset(
-                            x = CHAR_X_SPREADS[i].dp,
-                            y = (-25f + charOffsetY[i].value).dp
+                            x = charOffsetX[i].value.dp,
+                            y = (charInitialY + charOffsetY[i].value).dp
                         )
                         .alpha(charAlpha[i].value)
                 )
@@ -281,9 +312,9 @@ fun TitleScreen(
                 )
                 // 縦リボン (黄)
                 drawRect(
-                    color    = Color(0xFFFFEB3B),
-                    topLeft  = Offset(size.width * 0.42f, 0f),
-                    size     = Size(size.width * 0.16f, size.height)
+                    color   = Color(0xFFFFEB3B),
+                    topLeft = Offset(size.width * 0.42f, 0f),
+                    size    = Size(size.width * 0.16f, size.height)
                 )
                 // 底部の影
                 drawRoundRect(
@@ -294,18 +325,18 @@ fun TitleScreen(
                 )
             }
 
-            // ── ふた (Canvas + graphicsLayer でアニメーション) ──────────
-            // サイズ: 幅220dp × 高さ80dp (上28dpがリボン/蝶結びエリア, 下52dpがふた本体)
-            // transform origin = bottom-center = ふたと箱本体の境界部分を軸に回転
+            // ── ふた (graphicsLayer でアニメーション) ────────────────────
+            // 上28dp=蝶結びエリア / 下52dp=ふた本体
+            // transformOrigin(0.5f, 1f) = 下辺を軸に回転 → ふたが開く動き
             Box(
                 modifier = Modifier
                     .size(220.dp, 80.dp)
                     .align(Alignment.BottomCenter)
-                    .offset(y = (-130).dp)           // 箱本体の高さ分だけ上にずらす
+                    .offset(y = (-130).dp)
                     .graphicsLayer {
                         translationY    = lidOffsetY.value
                         rotationX       = lidRotationX.value
-                        transformOrigin = TransformOrigin(0.5f, 1f)  // 下辺を軸に回転
+                        transformOrigin = TransformOrigin(0.5f, 1f)
                         cameraDistance  = 10f * density
                     }
             ) {
@@ -316,15 +347,15 @@ fun TitleScreen(
 
                     // 蝶結び 左ループ
                     drawOval(
-                        color    = yellow,
-                        topLeft  = Offset(cx - 56.dp.toPx(), 1.dp.toPx()),
-                        size     = Size(50.dp.toPx(), 26.dp.toPx())
+                        color   = yellow,
+                        topLeft = Offset(cx - 56.dp.toPx(), 1.dp.toPx()),
+                        size    = Size(50.dp.toPx(), 26.dp.toPx())
                     )
                     // 蝶結び 右ループ
                     drawOval(
-                        color    = yellow,
-                        topLeft  = Offset(cx + 6.dp.toPx(), 1.dp.toPx()),
-                        size     = Size(50.dp.toPx(), 26.dp.toPx())
+                        color   = yellow,
+                        topLeft = Offset(cx + 6.dp.toPx(), 1.dp.toPx()),
+                        size    = Size(50.dp.toPx(), 26.dp.toPx())
                     )
                     // 蝶結び 中央ノット
                     drawCircle(
@@ -332,8 +363,7 @@ fun TitleScreen(
                         radius = 11.dp.toPx(),
                         center = Offset(cx, bowH - 2.dp.toPx())
                     )
-
-                    // ふた本体 (赤・角丸)
+                    // ふた本体
                     drawRoundRect(
                         color        = Color(0xFFEF5350),
                         topLeft      = Offset(0f, bowH),
@@ -342,9 +372,9 @@ fun TitleScreen(
                     )
                     // ふたの縦リボン
                     drawRect(
-                        color    = yellow,
-                        topLeft  = Offset(size.width * 0.42f, bowH),
-                        size     = Size(size.width * 0.16f, size.height - bowH)
+                        color   = yellow,
+                        topLeft = Offset(size.width * 0.42f, bowH),
+                        size    = Size(size.width * 0.16f, size.height - bowH)
                     )
                 }
             }
@@ -363,14 +393,14 @@ fun TitleScreen(
             )
         }
 
-        // ⑥ボタン (READY のみ・フェードイン)
+        // ⑥ ボタン (READY のみ・フェードイン)
         if (phase == TitlePhase.READY) {
             Column(
-                modifier              = Modifier
+                modifier            = Modifier
                     .align(Alignment.BottomCenter)
                     .padding(bottom = 64.dp)
                     .alpha(buttonAlpha.value),
-                horizontalAlignment   = Alignment.CenterHorizontally
+                horizontalAlignment = Alignment.CenterHorizontally
             ) {
                 if (savedProgress > 0) {
                     Button(
