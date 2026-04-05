@@ -43,24 +43,24 @@ fun QuizScreen(
         Column(
             modifier = Modifier
                 .fillMaxSize()
-                .padding(start = 24.dp, end = 24.dp, top = 24.dp, bottom = 72.dp),
+                .padding(start = 24.dp, end = 24.dp, top = 48.dp, bottom = 72.dp),
             horizontalAlignment = Alignment.CenterHorizontally
         ) {
-            // 進捗
-            Text(
-                text = "${uiState.currentIndex + 1}  /  ${uiState.total}",
-                fontSize = 18.sp,
-                color = Color(0xFF795548)
-            )
-            Spacer(modifier = Modifier.height(4.dp))
-
-            // 問題文
-            Text(
-                text = "だれといっしょ？",
-                fontSize = 28.sp,
-                fontWeight = FontWeight.Bold,
-                color = Color(0xFF5D4037)
-            )
+            Box(modifier = Modifier.fillMaxWidth()) {
+                Text(
+                    text = "だれといっしょ？",
+                    fontSize = 22.sp,
+                    fontWeight = FontWeight.Bold,
+                    color = Color(0xFF5D4037),
+                    modifier = Modifier.align(Alignment.Center)
+                )
+                Text(
+                    text = "${uiState.currentIndex + 1} / ${uiState.total}",
+                    fontSize = 14.sp,
+                    color = Color(0xFF795548),
+                    modifier = Modifier.align(Alignment.CenterEnd)
+                )
+            }
             Spacer(modifier = Modifier.height(10.dp))
 
             // 問題の絵（大）
