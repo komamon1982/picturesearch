@@ -317,7 +317,7 @@ fun TitleScreen(
                 fontSize   = 40.sp,
                 fontWeight = FontWeight.Bold,
                 color      = Color(0xFF5D4037),
-                modifier   = Modifier.align(Alignment.TopCenter).padding(top = 64.dp)
+                modifier   = Modifier.align(Alignment.TopCenter).padding(top = 120.dp)
             )
             Text(
                 text       = "おしてね！",
@@ -354,7 +354,7 @@ fun TitleScreen(
                     .padding(horizontal = 16.dp, vertical = 8.dp),
                 horizontalAlignment = Alignment.CenterHorizontally
             ) {
-                Spacer(Modifier.height(32.dp))
+                Spacer(Modifier.height(112.dp))
 
                 // にゅうがくおめでとう！
                 Text(

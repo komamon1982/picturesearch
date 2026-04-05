@@ -43,7 +43,7 @@ fun QuizScreen(
         Column(
             modifier = Modifier
                 .fillMaxSize()
-                .padding(horizontal = 16.dp, vertical = 12.dp),
+                .padding(start = 24.dp, end = 24.dp, top = 24.dp, bottom = 72.dp),
             horizontalAlignment = Alignment.CenterHorizontally
         ) {
             // 進捗
@@ -56,7 +56,7 @@ fun QuizScreen(
 
             // 問題文
             Text(
-                text = "これな～んだ？",
+                text = "だれといっしょ？",
                 fontSize = 28.sp,
                 fontWeight = FontWeight.Bold,
                 color = Color(0xFF5D4037)
