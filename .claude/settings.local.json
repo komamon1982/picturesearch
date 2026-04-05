@@ -1,0 +1,23 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(find . -maxdepth 3 -type f \\\\\\(-name *.gradle -o -name AndroidManifest.xml -o -name *.kt -o -name *.java -o -name *.xml -o -name *.png \\\\\\))",
+      "Bash(find ./app/src -type f \\\\\\(-name *.kt -o -name *.java -o -name *.xml -o -name *.png -o -name *.jpeg -o -name *.jpg -o -name *.gif \\\\\\))",
+      "Bash(git init:*)",
+      "Bash(git branch:*)",
+      "Bash(git remote:*)",
+      "Bash(git add:*)",
+      "Bash(git commit:*)",
+      "Bash(git config:*)",
+      "Bash(git push:*)",
+      "Bash(./gradlew assembleDebug 2>&1)",
+      "Bash(JAVA_HOME=\"/c/Program Files/Android/Android Studio/jbr\" PATH=\"$JAVA_HOME/bin:$PATH\" ./gradlew assembleDebug 2>&1)",
+      "Bash(where java:*)",
+      "Read(//c/Program Files/**)",
+      "Read(//c/Program Files/Android/Android Studio/jbr/**)",
+      "Bash(JAVA_HOME=\"C:/Program Files/Android/Android Studio/jbr\" ./gradlew assembleDebug:*)",
+      "Bash(export JAVA_HOME=\"/c/Program Files/Android/Android Studio/jbr\")",
+      "Bash(./gradlew assembleDebug)"
+    ]
+  }
+}

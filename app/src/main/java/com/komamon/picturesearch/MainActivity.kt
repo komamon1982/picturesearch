@@ -26,9 +26,9 @@ class MainActivity : ComponentActivity() {
 
                 when (uiState.screen) {
                     AppScreen.TITLE -> TitleScreen(
-                        savedProgress = viewModel.savedProgress,
+                        savedProgress        = viewModel.savedProgress,
                         onStartFromBeginning = viewModel::startFromBeginning,
-                        onContinue = viewModel::resumeFromSaved
+                        onContinue           = viewModel::resumeFromSaved
                     )
                     AppScreen.QUIZ -> QuizScreen(
                         uiState = uiState,

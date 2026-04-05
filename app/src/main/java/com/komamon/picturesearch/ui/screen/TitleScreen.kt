@@ -14,14 +14,19 @@ import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
@@ -56,25 +61,24 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlin.random.Random
 
-// ─── アニメーションフェーズ ───────────────────────────────────────────────────
+// ─── 子どもの名前（ここを変更してください）───────────────────────────────────
+private const val CHILD_NAME = "いちか"
+
+// ─── フェーズ ────────────────────────────────────────────────────────────────
 private enum class TitlePhase {
-    IDLE,          // プレゼント箱 + おしてね！
-    LID_OPENING,   // ふたが開く (0.5秒)
-    CHARS_FLYING,  // キャラが飛び出す → 下部に着地
-    CONGRATS,      // おめでとうテキスト + 紙吹雪
-    READY          // ボタン表示
+    IDLE,
+    LID_OPENING,
+    CHARS_FLYING,     // 箱から飛び出す（大きな放物線）
+    CHARS_ARRANGING,  // グリッド位置へスライド整列
+    CONGRATS,
+    READY
 }
 
-// ─── 紙吹雪データ ──────────────────────────────────────────────────────────────
+// ─── 紙吹雪 ──────────────────────────────────────────────────────────────────
 private data class Confetti(
-    val x: Float,
-    val startY: Float,
-    val size: Float,
-    val color: Color,
-    val rotation: Float,
-    val speed: Float
+    val x: Float, val startY: Float, val size: Float,
+    val color: Color, val rotation: Float, val speed: Float
 )
-
 private val CONFETTI_COLORS = listOf(
     Color(0xFFFF6B6B), Color(0xFFFFE66D), Color(0xFF6BCB77),
     Color(0xFF4D96FF), Color(0xFFFF6FC8), Color(0xFFFFA500)
@@ -82,71 +86,93 @@ private val CONFETTI_COLORS = listOf(
 
 private const val CHAR_COUNT = 13
 
-// ─── TitleScreen ──────────────────────────────────────────────────────────────
+// ─── プレゼント箱（Column 内の最終表示用）────────────────────────────────────────
+@Composable
+private fun PresentBox(lidOffsetY: Float, lidRotationX: Float) {
+    Box(modifier = Modifier.size(220.dp, 195.dp), contentAlignment = Alignment.BottomCenter) {
+        Canvas(modifier = Modifier.size(160.dp, 105.dp).align(Alignment.BottomCenter)) {
+            drawRoundRect(Color(0xFFE53935), cornerRadius = CornerRadius(14.dp.toPx()))
+            drawRect(Color(0xFFFFEB3B), Offset(size.width * 0.42f, 0f), Size(size.width * 0.16f, size.height))
+            drawRoundRect(Color(0x40B71C1C), Offset(0f, size.height * 0.75f),
+                Size(size.width, size.height * 0.25f), CornerRadius(14.dp.toPx()))
+        }
+        Box(
+            modifier = Modifier
+                .size(176.dp, 64.dp)
+                .align(Alignment.BottomCenter)
+                .offset(y = (-105).dp)
+                .graphicsLayer {
+                    translationY    = lidOffsetY
+                    rotationX       = lidRotationX
+                    transformOrigin = TransformOrigin(0.5f, 1f)
+                    cameraDistance  = 10f * density
+                }
+        ) {
+            Canvas(modifier = Modifier.fillMaxSize()) {
+                val bowH   = 22.dp.toPx()
+                val yellow = Color(0xFFFFEB3B)
+                val cx     = size.width / 2f
+                drawOval(yellow, Offset(cx - 44.dp.toPx(), 1.dp.toPx()), Size(40.dp.toPx(), 20.dp.toPx()))
+                drawOval(yellow, Offset(cx +  6.dp.toPx(), 1.dp.toPx()), Size(40.dp.toPx(), 20.dp.toPx()))
+                drawCircle(Color(0xFFFF6F00),  9.dp.toPx(), Offset(cx, bowH - 2.dp.toPx()))
+                drawRoundRect(Color(0xFFEF5350), Offset(0f, bowH),
+                    Size(size.width, size.height - bowH), CornerRadius(10.dp.toPx()))
+                drawRect(yellow, Offset(size.width * 0.42f, bowH),
+                    Size(size.width * 0.16f, size.height - bowH))
+            }
+        }
+    }
+}
+
+// ─── TitleScreen ─────────────────────────────────────────────────────────────
 @Composable
 fun TitleScreen(
     savedProgress: Int,
     onStartFromBeginning: () -> Unit,
     onContinue: () -> Unit
 ) {
-    // 画面幅からキャラクターサイズを決定 (45%)
-    val screenWidthDp = LocalConfiguration.current.screenWidthDp.toFloat()
-    val charSizeDp    = screenWidthDp * 0.45f
-
-    // 着地Y計算のメモ:
-    //   align(BottomCenter) + offset(y=charInitialY+charOffsetY) のとき、
-    //   キャラ中心 (親Box座標の上端からの距離) = 185 + charOffsetY
-    //   (charSizeDpに関わらず成立: charInitialY = charSizeDp/2 - 65 がキャンセル)
-    //   親Box下端 = 250dp から、
-    //   85～180dp 下に着地 → charOffsetY = (250+85～180) - 185 + charSizeDp/2
-    //   = 150+charSizeDp/2 ～ 245+charSizeDp/2
-
     var phase by remember { mutableStateOf(TitlePhase.IDLE) }
 
-    // ── Lid アニメーション ─────────────────────────────────────────────────
+    // シャッフル済み順番（この起動中は固定）
+    val shuffledChars = remember { QuizRepository.questions.shuffled() }
+
+    // ── 画面・レイアウトの定数 ───────────────────────────────────────────
+    val W = LocalConfiguration.current.screenWidthDp.toFloat()
+    val H = LocalConfiguration.current.screenHeightDp.toFloat()
+
+    val flyCharSize  = W * 0.45f   // 飛び出しアニメ中のキャラサイズ (dp)
+    val boxCenterX   = W / 2f     // プレゼント箱の中心X (dp)
+    val boxCenterY   = H / 2f - 20f
+
+    // ── アニメーション変数 ───────────────────────────────────────────────
     val lidOffsetY   = remember { Animatable(0f) }
     val lidRotationX = remember { Animatable(0f) }
 
-    // ── 全13枚のキャラアニメーション ───────────────────────────────────────
-    val allChars    = QuizRepository.questions
     val charOffsetX = remember { List(CHAR_COUNT) { Animatable(0f) } }
     val charOffsetY = remember { List(CHAR_COUNT) { Animatable(0f) } }
     val charAlpha   = remember { List(CHAR_COUNT) { Animatable(0f) } }
 
-    // 横方向の散らばり目標 (±120dp)
-    val charTargetX = remember {
-        List(CHAR_COUNT) { Random.nextFloat() * 240f - 120f }
-    }
-    // 着地目標Y: 親Box下端から 85〜175dp 下に着地
-    //   charOffsetY = 150 + charSizeDp/2 + [0〜90] (dp)
-    val charLandingY = remember(charSizeDp) {
-        List(CHAR_COUNT) { 150f + charSizeDp / 2f + Random.nextFloat() * 90f }
-    }
+    // 飛び出し時のランダムターゲット
+    val charFlyX   = remember { List(CHAR_COUNT) { Random.nextFloat() * 200f - 100f } } // ±100dp
+    // 着地Y: boxBottom(+125) + charHalf + 余白40dp を最低保証した上でランダム加算
+    val charLandY  = remember(flyCharSize) { List(CHAR_COUNT) { 105f + flyCharSize / 2f + 40f + Random.nextFloat() * 80f } }
 
-    // ── おめでとうアニメーション ───────────────────────────────────────────
     val congratsScale = remember { Animatable(0f) }
     val buttonAlpha   = remember { Animatable(0f) }
 
-    // ── 無限トランジション (バウンス・紙吹雪) ──────────────────────────────
-    val infiniteTransition = rememberInfiniteTransition(label = "title_infinite")
-
-    val bounceOffset by infiniteTransition.animateFloat(
-        initialValue  = 0f,
-        targetValue   = -10f,
-        animationSpec = infiniteRepeatable(
-            tween(500, easing = FastOutSlowInEasing),
-            RepeatMode.Reverse
-        ),
+    // ── 無限アニメーション ───────────────────────────────────────────────
+    val inf = rememberInfiniteTransition(label = "title_inf")
+    val bounceOffset by inf.animateFloat(
+        0f, -10f,
+        animationSpec = infiniteRepeatable(tween(500, easing = FastOutSlowInEasing), RepeatMode.Reverse),
         label = "bounce"
     )
-    val confettiProgress by infiniteTransition.animateFloat(
-        initialValue  = 0f,
-        targetValue   = 1f,
+    val confettiProg by inf.animateFloat(
+        0f, 1f,
         animationSpec = infiniteRepeatable(tween(3000, easing = LinearEasing)),
         label = "confetti"
     )
-
-    val confettiParticles = remember {
+    val confettiList = remember {
         List(40) { i ->
             Confetti(
                 x        = Random.nextFloat(),
@@ -159,7 +185,7 @@ fun TitleScreen(
         }
     }
 
-    // ── フェーズ遷移ロジック ────────────────────────────────────────────────
+    // ── フェーズ遷移 ─────────────────────────────────────────────────────
     LaunchedEffect(phase) {
         when (phase) {
 
@@ -172,24 +198,24 @@ fun TitleScreen(
             }
 
             TitlePhase.CHARS_FLYING -> {
-                // 全13枚を 0.12秒ずつずらして放物線で飛び出し → 下部に着地
-                // X: 等速水平移動 (LinearEasing, 700ms)
-                // Y Phase1: 上に射出 (300ms, FastOutSlowIn)
-                // Y Phase2: 下の着地点に落下 (400ms, FastOutSlowIn)
+                // シャッフル順に 0.15秒ずつずらして放物線で飛び出す
                 coroutineScope {
-                    allChars.indices.forEach { i ->
+                    shuffledChars.indices.forEach { i ->
                         launch {
-                            delay(i * 120L)
-                            launch { charAlpha[i].animateTo(1f, tween(150)) }
+                            delay(i * 150L)
+                            launch { charAlpha[i].animateTo(1f, tween(200)) }
                             launch {
-                                charOffsetX[i].animateTo(
-                                    charTargetX[i],
-                                    tween(700, easing = LinearEasing)
-                                )
+                                charOffsetX[i].animateTo(charFlyX[i], tween(850, easing = LinearEasing))
                             }
-                            charOffsetY[i].animateTo(-120f, tween(300, easing = FastOutSlowInEasing))
-                            charOffsetY[i].animateTo(charLandingY[i], tween(400, easing = FastOutSlowInEasing))
+                            charOffsetY[i].animateTo(-320f, tween(450, easing = FastOutSlowInEasing))
+                            charOffsetY[i].animateTo(charLandY[i], tween(400, easing = FastOutSlowInEasing))
                         }
+                    }
+                }
+                // 全キャラ着地後にフェードアウト（アニメ用レイヤーを消す）
+                coroutineScope {
+                    shuffledChars.indices.forEach { i ->
+                        launch { charAlpha[i].animateTo(0f, tween(400)) }
                     }
                 }
                 phase = TitlePhase.CONGRATS
@@ -209,7 +235,7 @@ fun TitleScreen(
         }
     }
 
-    // ── UI ─────────────────────────────────────────────────────────────────
+    // ── UI ───────────────────────────────────────────────────────────────
     Box(
         modifier = Modifier
             .fillMaxSize()
@@ -219,226 +245,80 @@ fun TitleScreen(
             }
     ) {
 
-        // ① 紙吹雪レイヤー (CONGRATS 以降)
-        if (phase == TitlePhase.CONGRATS || phase == TitlePhase.READY) {
-            Canvas(modifier = Modifier.fillMaxSize()) {
-                confettiParticles.forEach { p ->
-                    val cy = (confettiProgress * p.speed + p.startY) % 1f
-                    val x  = p.x * size.width
-                    val y  = cy * (size.height + p.size * 2f) - p.size
-                    rotate(p.rotation + confettiProgress * 360f, Offset(x, y)) {
-                        drawRect(
-                            color   = p.color,
-                            topLeft = Offset(x - p.size / 2f, y - p.size / 2f),
-                            size    = Size(p.size, p.size * 0.55f)
-                        )
-                    }
-                }
-            }
-        }
-
-        // ② 上部コンテンツ：タイトル(IDLE) または おめでとう+ボタン(CONGRATS/READY)
-        //    レイアウト優先順位: ボタン上 → プレゼント箱中央 → キャラ下
-        Column(
-            modifier            = Modifier
-                .align(Alignment.TopCenter)
-                .padding(top = 48.dp),
-            horizontalAlignment = Alignment.CenterHorizontally
-        ) {
-            when (phase) {
-                TitlePhase.IDLE, TitlePhase.LID_OPENING -> {
-                    Text(
-                        text       = "えあてクイズ",
-                        fontSize   = 40.sp,
-                        fontWeight = FontWeight.Bold,
-                        color      = Color(0xFF5D4037)
-                    )
-                }
-                TitlePhase.CONGRATS, TitlePhase.READY -> {
-                    // おめでとうテキスト
-                    Text(
-                        text       = "にゅうがく\nおめでとう！",
-                        fontSize   = 36.sp,
-                        fontWeight = FontWeight.Bold,
-                        color      = Color(0xFF4A148C),
-                        textAlign  = TextAlign.Center,
-                        modifier   = Modifier.graphicsLayer {
-                            scaleX = congratsScale.value
-                            scaleY = congratsScale.value
-                            alpha  = congratsScale.value
-                        }
-                    )
-                    // ボタン: プレゼント箱の上に配置 (キャラとの重なり防止)
-                    if (phase == TitlePhase.READY) {
-                        Spacer(modifier = Modifier.height(14.dp))
-                        Column(
-                            modifier            = Modifier.alpha(buttonAlpha.value),
-                            horizontalAlignment = Alignment.CenterHorizontally
-                        ) {
-                            if (savedProgress > 0) {
-                                Button(
-                                    onClick = onContinue,
-                                    shape   = RoundedCornerShape(50),
-                                    colors  = ButtonDefaults.buttonColors(
-                                        containerColor = Color(0xFF4CAF50)
-                                    )
-                                ) {
-                                    Text(
-                                        text       = "つづきから（${savedProgress + 1}もんめ）",
-                                        fontSize   = 17.sp,
-                                        fontWeight = FontWeight.Bold,
-                                        modifier   = Modifier.padding(
-                                            vertical   = 5.dp,
-                                            horizontal = 8.dp
-                                        )
-                                    )
-                                }
-                                Spacer(modifier = Modifier.height(10.dp))
-                                Button(
-                                    onClick = onStartFromBeginning,
-                                    shape   = RoundedCornerShape(50),
-                                    colors  = ButtonDefaults.buttonColors(
-                                        containerColor = Color(0xFFFF9800)
-                                    )
-                                ) {
-                                    Text(
-                                        text       = "はじめから",
-                                        fontSize   = 17.sp,
-                                        fontWeight = FontWeight.Bold,
-                                        modifier   = Modifier.padding(
-                                            vertical   = 5.dp,
-                                            horizontal = 12.dp
-                                        )
-                                    )
-                                }
-                            } else {
-                                Button(
-                                    onClick = onStartFromBeginning,
-                                    shape   = RoundedCornerShape(50),
-                                    colors  = ButtonDefaults.buttonColors(
-                                        containerColor = Color(0xFFFF9800)
-                                    )
-                                ) {
-                                    Text(
-                                        text       = "クイズをはじめる！",
-                                        fontSize   = 20.sp,
-                                        fontWeight = FontWeight.Bold,
-                                        modifier   = Modifier.padding(
-                                            vertical   = 7.dp,
-                                            horizontal = 16.dp
-                                        )
-                                    )
-                                }
-                            }
-                        }
-                    }
-                }
-                else -> Unit
-            }
-        }
-
-        // ③ プレゼント箱エリア (画面中央固定・フェーズ変化で動かない)
-        Box(
-            modifier         = Modifier
-                .size(280.dp, 250.dp)
-                .align(Alignment.Center)
-                .offset(y = (-20).dp),
-            contentAlignment = Alignment.BottomCenter
-        ) {
-            // ── キャラクター画像 ─────────────────────────────────────────
-            // 描画順: キャラ(背面) → 箱本体 → ふた(前面)
-            // 初期: charOffsetY=0 → 箱中心に待機 (alpha=0で不可視)
-            // 飛び出し: 上昇後、charLandingY (正値=下方向) の位置に着地
-            //           → 親Boxを大きく超えて画面下部に着地
-            allChars.forEachIndexed { i, question ->
-                val charInitialY = charSizeDp / 2f - 65f  // 箱中心に合わせる初期オフセット
+        // ① アニメ用キャラ（飛び出し中のみ表示・着地後フェードアウト）
+        if (phase == TitlePhase.LID_OPENING || phase == TitlePhase.CHARS_FLYING) {
+            shuffledChars.forEachIndexed { i, question ->
                 Image(
                     painter            = painterResource(question.imageRes),
                     contentDescription = null,
                     contentScale       = ContentScale.Fit,
                     modifier           = Modifier
-                        .size(charSizeDp.dp)
-                        .align(Alignment.BottomCenter)
+                        .size(flyCharSize.dp)
                         .offset(
-                            x = charOffsetX[i].value.dp,
-                            y = (charInitialY + charOffsetY[i].value).dp
+                            x = (boxCenterX - flyCharSize / 2f + charOffsetX[i].value).dp,
+                            y = (boxCenterY - flyCharSize / 2f + charOffsetY[i].value).dp
                         )
                         .alpha(charAlpha[i].value)
                 )
             }
+        }
 
-            // ── 箱本体 (Canvas) ─────────────────────────────────────────
-            Canvas(
-                modifier = Modifier
-                    .size(200.dp, 130.dp)
-                    .align(Alignment.BottomCenter)
-            ) {
-                drawRoundRect(
-                    color        = Color(0xFFE53935),
-                    cornerRadius = CornerRadius(16.dp.toPx())
-                )
-                drawRect(
-                    color   = Color(0xFFFFEB3B),
-                    topLeft = Offset(size.width * 0.42f, 0f),
-                    size    = Size(size.width * 0.16f, size.height)
-                )
-                drawRoundRect(
-                    color        = Color(0x40B71C1C),
-                    topLeft      = Offset(0f, size.height * 0.75f),
-                    size         = Size(size.width, size.height * 0.25f),
-                    cornerRadius = CornerRadius(16.dp.toPx())
-                )
-            }
-
-            // ── ふた (graphicsLayer でアニメーション) ────────────────────
+        // ② プレゼント箱（IDLE・アニメ中のみ・最終表示は Column 内の PresentBox() で描画）
+        if (phase != TitlePhase.CONGRATS && phase != TitlePhase.READY) {
             Box(
-                modifier = Modifier
-                    .size(220.dp, 80.dp)
-                    .align(Alignment.BottomCenter)
-                    .offset(y = (-130).dp)
-                    .graphicsLayer {
-                        translationY    = lidOffsetY.value
-                        rotationX       = lidRotationX.value
-                        transformOrigin = TransformOrigin(0.5f, 1f)
-                        cameraDistance  = 10f * density
-                    }
+                modifier         = Modifier
+                    .size(280.dp, 250.dp)
+                    .align(Alignment.Center)
+                    .offset(y = (-20).dp),
+                contentAlignment = Alignment.BottomCenter
             ) {
-                Canvas(modifier = Modifier.fillMaxSize()) {
-                    val bowH   = 28.dp.toPx()
-                    val yellow = Color(0xFFFFEB3B)
-                    val cx     = size.width / 2f
-                    drawOval(
-                        color   = yellow,
-                        topLeft = Offset(cx - 56.dp.toPx(), 1.dp.toPx()),
-                        size    = Size(50.dp.toPx(), 26.dp.toPx())
-                    )
-                    drawOval(
-                        color   = yellow,
-                        topLeft = Offset(cx + 6.dp.toPx(), 1.dp.toPx()),
-                        size    = Size(50.dp.toPx(), 26.dp.toPx())
-                    )
-                    drawCircle(
-                        color  = Color(0xFFFF6F00),
-                        radius = 11.dp.toPx(),
-                        center = Offset(cx, bowH - 2.dp.toPx())
-                    )
-                    drawRoundRect(
-                        color        = Color(0xFFEF5350),
-                        topLeft      = Offset(0f, bowH),
-                        size         = Size(size.width, size.height - bowH),
-                        cornerRadius = CornerRadius(12.dp.toPx())
-                    )
-                    drawRect(
-                        color   = yellow,
-                        topLeft = Offset(size.width * 0.42f, bowH),
-                        size    = Size(size.width * 0.16f, size.height - bowH)
-                    )
+                Canvas(modifier = Modifier.size(200.dp, 130.dp).align(Alignment.BottomCenter)) {
+                    drawRoundRect(color = Color(0xFFE53935), cornerRadius = CornerRadius(16.dp.toPx()))
+                    drawRect(color = Color(0xFFFFEB3B),
+                        topLeft = Offset(size.width * 0.42f, 0f),
+                        size    = Size(size.width * 0.16f, size.height))
+                    drawRoundRect(color = Color(0x40B71C1C),
+                        topLeft      = Offset(0f, size.height * 0.75f),
+                        size         = Size(size.width, size.height * 0.25f),
+                        cornerRadius = CornerRadius(16.dp.toPx()))
+                }
+                Box(
+                    modifier = Modifier
+                        .size(220.dp, 80.dp)
+                        .align(Alignment.BottomCenter)
+                        .offset(y = (-130).dp)
+                        .graphicsLayer {
+                            translationY    = lidOffsetY.value
+                            rotationX       = lidRotationX.value
+                            transformOrigin = TransformOrigin(0.5f, 1f)
+                            cameraDistance  = 10f * density
+                        }
+                ) {
+                    Canvas(modifier = Modifier.fillMaxSize()) {
+                        val bowH   = 28.dp.toPx()
+                        val yellow = Color(0xFFFFEB3B)
+                        val cx     = size.width / 2f
+                        drawOval(yellow, Offset(cx - 56.dp.toPx(), 1.dp.toPx()), Size(50.dp.toPx(), 26.dp.toPx()))
+                        drawOval(yellow, Offset(cx +  6.dp.toPx(), 1.dp.toPx()), Size(50.dp.toPx(), 26.dp.toPx()))
+                        drawCircle(Color(0xFFFF6F00), 11.dp.toPx(), Offset(cx, bowH - 2.dp.toPx()))
+                        drawRoundRect(Color(0xFFEF5350), Offset(0f, bowH),
+                            Size(size.width, size.height - bowH), CornerRadius(12.dp.toPx()))
+                        drawRect(yellow, Offset(size.width * 0.42f, bowH),
+                            Size(size.width * 0.16f, size.height - bowH))
+                    }
                 }
             }
         }
 
-        // ④「おしてね！」テキスト (IDLE のみ・バウンス)
+        // ③ IDLE 表示（タイトル・おしてね）
         if (phase == TitlePhase.IDLE) {
+            Text(
+                text       = "えあてクイズ",
+                fontSize   = 40.sp,
+                fontWeight = FontWeight.Bold,
+                color      = Color(0xFF5D4037),
+                modifier   = Modifier.align(Alignment.TopCenter).padding(top = 64.dp)
+            )
             Text(
                 text       = "おしてね！",
                 fontSize   = 26.sp,
@@ -448,6 +328,150 @@ fun TitleScreen(
                     .align(Alignment.Center)
                     .offset(y = (155 + bounceOffset).dp)
             )
+        }
+
+        // ④ 最終表示（CONGRATS / READY）: Column レイアウト
+        if (phase == TitlePhase.CONGRATS || phase == TitlePhase.READY) {
+
+            // 紙吹雪（背面）
+            Canvas(modifier = Modifier.fillMaxSize()) {
+                confettiList.forEach { p ->
+                    val cy = (confettiProg * p.speed + p.startY) % 1f
+                    val x  = p.x * size.width
+                    val y  = cy * (size.height + p.size * 2f) - p.size
+                    rotate(p.rotation + confettiProg * 360f, Offset(x, y)) {
+                        drawRect(p.color, Offset(x - p.size / 2f, y - p.size / 2f),
+                            Size(p.size, p.size * 0.55f))
+                    }
+                }
+            }
+
+            // Column（スクロール対応）
+            Column(
+                modifier            = Modifier
+                    .fillMaxSize()
+                    .verticalScroll(rememberScrollState())
+                    .padding(horizontal = 16.dp, vertical = 8.dp),
+                horizontalAlignment = Alignment.CenterHorizontally
+            ) {
+                Spacer(Modifier.height(32.dp))
+
+                // にゅうがくおめでとう！
+                Text(
+                    text       = "にゅうがく\nおめでとう！",
+                    fontSize   = 30.sp,
+                    fontWeight = FontWeight.Bold,
+                    color      = Color(0xFF4A148C),
+                    textAlign  = TextAlign.Center,
+                    modifier   = Modifier.graphicsLayer {
+                        scaleX = congratsScale.value
+                        scaleY = congratsScale.value
+                        alpha  = congratsScale.value
+                    }
+                )
+
+                Spacer(Modifier.height(8.dp))
+
+                // ○○○ちゃん
+                Text(
+                    text       = "${CHILD_NAME}ちゃん",
+                    fontSize   = 34.sp,
+                    fontWeight = FontWeight.Bold,
+                    color      = Color(0xFFE91E63),
+                    modifier   = Modifier.graphicsLayer {
+                        scaleX = congratsScale.value
+                        scaleY = congratsScale.value
+                        alpha  = congratsScale.value
+                    }
+                )
+
+                Spacer(Modifier.height(16.dp))
+
+                // プレゼント箱（蓋が開いた状態）
+                PresentBox(lidOffsetY = lidOffsetY.value, lidRotationX = lidRotationX.value)
+
+                Spacer(Modifier.height(8.dp))
+
+                // キャラクター一覧（1行目：5枚、2行目：5枚、3行目：3枚）
+                val charGridSize = (W - 32f) / 5f
+                Row(
+                    modifier              = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.Center
+                ) {
+                    shuffledChars.take(5).forEach { q ->
+                        Image(
+                            painter            = painterResource(q.imageRes),
+                            contentDescription = null,
+                            contentScale       = ContentScale.Fit,
+                            modifier           = Modifier.size(charGridSize.dp)
+                        )
+                    }
+                }
+                Row(
+                    modifier              = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.Center
+                ) {
+                    shuffledChars.drop(5).take(5).forEach { q ->
+                        Image(
+                            painter            = painterResource(q.imageRes),
+                            contentDescription = null,
+                            contentScale       = ContentScale.Fit,
+                            modifier           = Modifier.size(charGridSize.dp)
+                        )
+                    }
+                }
+                Row(
+                    modifier              = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.Center
+                ) {
+                    shuffledChars.drop(10).forEach { q ->
+                        Image(
+                            painter            = painterResource(q.imageRes),
+                            contentDescription = null,
+                            contentScale       = ContentScale.Fit,
+                            modifier           = Modifier.size(charGridSize.dp)
+                        )
+                    }
+                }
+
+                Spacer(Modifier.height(12.dp))
+
+                // ボタン（フェードイン）
+                Column(
+                    modifier            = Modifier.alpha(buttonAlpha.value),
+                    horizontalAlignment = Alignment.CenterHorizontally
+                ) {
+                    Button(
+                        onClick = onStartFromBeginning,
+                        shape   = RoundedCornerShape(50),
+                        colors  = ButtonDefaults.buttonColors(containerColor = Color(0xFFFF9800))
+                    ) {
+                        Text(
+                            text       = "クイズをはじめる！",
+                            fontSize   = 20.sp,
+                            fontWeight = FontWeight.Bold,
+                            modifier   = Modifier.padding(vertical = 7.dp, horizontal = 16.dp)
+                        )
+                    }
+                    if (savedProgress > 0) {
+                        Spacer(Modifier.height(8.dp))
+                        Button(
+                            onClick = onContinue,
+                            shape   = RoundedCornerShape(50),
+                            colors  = ButtonDefaults.buttonColors(containerColor = Color(0xFF78909C))
+                        ) {
+                            Text(
+                                text       = "つづきからはじめる（${savedProgress + 1}もんめ）",
+                                fontSize   = 14.sp,
+                                fontWeight = FontWeight.Bold,
+                                modifier   = Modifier.padding(vertical = 3.dp, horizontal = 8.dp)
+                            )
+                        }
+                    }
+                }
+
+                Spacer(Modifier.height(8.dp))
+            }
         }
     }
 }

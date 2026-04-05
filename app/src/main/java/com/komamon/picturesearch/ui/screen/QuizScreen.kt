@@ -14,6 +14,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
+import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
@@ -81,7 +82,15 @@ fun QuizScreen(
                 )
             }
 
-            Spacer(modifier = Modifier.height(12.dp))
+            Spacer(modifier = Modifier.height(10.dp))
+
+            // 区切り線
+            HorizontalDivider(
+                color = Color(0xFF757575),
+                thickness = 3.dp
+            )
+
+            Spacer(modifier = Modifier.height(10.dp))
 
             // 2×2 選択肢グリッド
             if (uiState.choices.size == 4) {
